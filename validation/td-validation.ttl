@@ -1,4 +1,4 @@
-@prefix : <http://www.w3.org/ns/td-validation#> .
+@prefix : <https://www.w3.org/ns/td-validation#> .
 @prefix td: <https://www.w3.org/2019/wot/td#> .
 @prefix jsonschema: <https://www.w3.org/2019/wot/json-schema#> .
 @prefix wotsec: <https://www.w3.org/2019/wot/security#> .
