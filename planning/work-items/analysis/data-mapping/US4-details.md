@@ -283,7 +283,7 @@ All examples include proprietary `map` terms and available standard terms where 
 
 ### Example 1: Exact Enum Mapping
 
-This example is modeled on the [Siemens OpenAir `GDB111.1E/MO` / `GLB111.1E/MO` Modbus RTU damper actuator](https://support.industry.siemens.com/cs/us/en/view/109781220), documented in operating manual A6V10881141, "Damper Actuator Modbus RTU G..B111.1E/MO". The manual exposes a readable/writable holding register named `Override control` (documentation register 2, protocol address 1) with the exact enumeration `0 = Off / 1 = Open / 2 = Close / 3 = Stop / 4 = GoToMin / 5 = GoToMax`. This is a direct real-world instance of a bidirectional exact enum mapping: the wire side is a small integer code set, while the application uses the semantic strings `off`, `open`, `close`, `stop`, `goToMin`, and `goToMax`. The TD form uses a Modbus TCP gateway URI because the [current WoT Modbus binding](https://w3c.github.io/wot-binding-templates/bindings/protocols/modbus/) defines `modbus+tcp` forms; the gateway is assumed to bridge to the actuator's physical Modbus RTU connection.
+This example is modeled on the Siemens OpenAir `GDB111.1E/MO` / `GLB111.1E/MO` Modbus RTU damper actuator documented in operating manual A6V10881141, "Damper Actuator Modbus RTU G..B111.1E/MO". The manual exposes a readable/writable holding register named `Override control` (documentation register 2, protocol address 1) with the exact enumeration `0 = Off / 1 = Open / 2 = Close / 3 = Stop / 4 = GoToMin / 5 = GoToMax`. This is a direct real-world instance of a bidirectional exact enum mapping: the wire side is a small integer code set, while the application uses the semantic strings `off`, `open`, `close`, `stop`, `goToMin`, and `goToMax`. The TD form uses a Modbus TCP gateway URI because the [current WoT Modbus binding](https://w3c.github.io/wot-binding-templates/bindings/protocols/modbus/) defines `modbus+tcp` forms; the gateway is assumed to bridge to the actuator's physical Modbus RTU connection.
 
 ```json
 {
@@ -338,7 +338,7 @@ This example is modeled on the [Siemens OpenAir `GDB111.1E/MO` / `GLB111.1E/MO` 
 
 ### Example 2: Range Classification of an MQTT Battery Percentage
 
-The [Heiman `HS1CA-E` Zigbee carbon-monoxide alarm](https://www.zigbee2mqtt.io/devices/HS1CA-E.html) exposes `battery` (0..100%) through Zigbee2MQTT. [Zigbee2MQTT publishes device state on the `zigbee2mqtt/FRIENDLY_NAME` MQTT topic as JSON](https://www.zigbee2mqtt.io/guide/usage/mqtt_topics_and_messages.html). This example models that adapter-facing payload, where the JSON battery value is already normalized, and classifies it into semantic bands. The Zigbee half-percent encoding and reserved `255` value are handled inside the adapter and are not part of this TD form.
+The Heiman `HS1CA-E` Zigbee carbon-monoxide alarm exposes `battery` (0..100%) through Zigbee2MQTT. [Zigbee2MQTT publishes device state on the `zigbee2mqtt/FRIENDLY_NAME` MQTT topic as JSON](https://www.zigbee2mqtt.io/guide/usage/mqtt_topics_and_messages.html). This example models that adapter-facing payload, where the JSON battery value is already normalized, and classifies it into semantic bands. The Zigbee half-percent encoding and reserved `255` value are handled inside the adapter and are not part of this TD form.
 
 ```json
 {
@@ -388,7 +388,7 @@ The [Heiman `HS1CA-E` Zigbee carbon-monoxide alarm](https://www.zigbee2mqtt.io/d
 
 ### Example 3: Writable Range Mapping for MQTT Light Brightness
 
-The [IKEA LED1545G12](https://www.zigbee2mqtt.io/devices/LED1545G12.html) is a Zigbee dimmable bulb supported by Zigbee2MQTT. Its `brightness` property is writable through the JSON payload `{"brightness": VALUE}` on `zigbee2mqtt/FRIENDLY_NAME/set`, with `VALUE` documented as `0..254`; the current state is published as JSON on the device topic. This example exposes semantic brightness bands, selects one canonical percentage for each band, and converts that representative to the device's numeric brightness value. The TD uses separate read and write forms because Zigbee2MQTT publishes state on the base topic and accepts commands on `/set`.
+The IKEA LED1545G12 is a Zigbee dimmable bulb supported by Zigbee2MQTT. Its `brightness` property is writable through the JSON payload `{"brightness": VALUE}` on `zigbee2mqtt/FRIENDLY_NAME/set`, with `VALUE` documented as `0..254`; the current state is published as JSON on the device topic. This example exposes semantic brightness bands, selects one canonical percentage for each band, and converts that representative to the device's numeric brightness value. The TD uses separate read and write forms because Zigbee2MQTT publishes state on the base topic and accepts commands on `/set`.
 
 ```json
 {
