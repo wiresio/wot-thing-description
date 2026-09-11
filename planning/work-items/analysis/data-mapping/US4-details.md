@@ -455,7 +455,167 @@ The [IKEA LED1545G12](https://www.zigbee2mqtt.io/devices/LED1545G12.html) is a Z
 **What the example shows:**
 - A range mapping is not inherently invertible.
 - Canonical representatives make the write path deterministic, but writing a band does not restore the original percentage.
+- The canonical values selected in this example are for illustration only and do not represent a recommendation; manufacturers might select other values and even more or fewer ranges that better reflect the features of their product.
 - The reverse pipeline maps the canonical percentage to the Zigbee2MQTT brightness value after enum classification.
+
+### Example 4: Exact Enum Mapping for a BACnet Multistate Property
+
+The BACnet binding example for enum mapping shows how a protocol value can be translated into a semantic application value. This same pattern can be expressed directly with the generic `map` vocabulary. The example models a BACnet multistate property whose protocol value is an integer and whose application value is a string.
+
+```json
+{
+  "@context": [
+    "https://www.w3.org/ns/wot-next/td",
+    {
+      "map": "https://www.w3.org/wot/data-mapping/v1#"
+    }
+  ],
+  "id": "urn:example:thing:multistate-1",
+  "title": "BACnetMultistateProperty",
+  "properties": {
+    "multistate1": {
+      "type": "string",
+      "enum": ["on", "off", "auto", "manual"],
+      "readOnly": true,
+      "forms": [
+        {
+          "href": "bacnet://5/14,1/85",
+          "contentType": "application/octet-stream",
+          "op": ["readproperty"],
+          "map:valueMapping": {
+            "map:fromWire": [
+              {
+                "map:proc": "enum",
+                "map:map": [
+                  { "map:wire": 1, "map:app": "on" },
+                  { "map:wire": 2, "map:app": "off" },
+                  { "map:wire": 3, "map:app": "auto" },
+                  { "map:wire": 4, "map:app": "manual" }
+                ],
+                "map:onNoMatch": "error"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+**What the example shows:**
+- It follows the BACnet enum-mapping pattern shown in https://w3c.github.io/wot-binding-templates/bindings/protocols/bacnet/#example-enum-mapping.
+- The protocol value is represented as `map:wire`; the application value is represented as `map:app`.
+- `map:proc: "enum"` performs an exact lookup from protocol values to semantic strings.
+- The mapping is explicit and directional; an unknown BACnet state is rejected unless a different `map:onNoMatch` policy is defined.
+
+### Example 5: Bitfield Mapping for a PROFINET Complex Datatype
+
+The PROFINET binding example for a complex datatype shows how a bitfield within a larger protocol payload can be decoded into meaningful boolean values. The same pattern can be expressed directly with the generic `map` vocabulary by treating each encoded bit as an exact enum lookup. This example models two boolean flags from the same PROFINET payload.
+
+```json
+{
+  "@context": [
+    "https://www.w3.org/ns/wot-next/td",
+    {
+      "map": "https://www.w3.org/wot/data-mapping/v1#",
+      "profv": "https://profinet_vocabulary_context"
+    }
+  ],
+  "id": "urn:example:thing:profinet-boolean-flags",
+  "title": "PROFINETBooleanFlags",
+  "profv:deviceId": 12,
+  "profv:vendorId": 268,
+  "securityDefinitions": {
+    "nosec_sc": {
+      "scheme": "nosec"
+    }
+  },
+  "security": "nosec_sc",
+  "properties": {
+    "bufferingParameters": {
+      "title": "Buffering parameters",
+      "type": "object",
+      "properties": {
+        "bufferingAllowed": {
+          "type": "boolean"
+        },
+        "enableResetAfterBuffering": {
+          "type": "boolean"
+        }
+      },
+      "forms": [
+        {
+          "op": [
+            "writeproperty",
+            "readproperty"
+          ],
+          "href": "profinet://127.0.0.1/0/1?api=0&index=1&datalength=14",
+          "contentType": "application/octet-stream",
+          "profv:type": "object",
+          "profv:pollingTime": 200,
+          "profv:payloadMapping": {
+            "bufferingAllowed": {
+              "profv:type": "boolean",
+              "profv:byteOffset": 12,
+              "profv:byteLength": 1,
+              "profv:bitOffset": 0,
+              "map:valueMapping": {
+                "map:fromWire": [
+                  {
+                    "map:proc": "enum",
+                    "map:map": [
+                      {
+                        "map:wire": 0,
+                        "map:app": false
+                      },
+                      {
+                        "map:wire": 1,
+                        "map:app": true
+                      }
+                    ],
+                    "map:onNoMatch": "error"
+                  }
+                ]
+              }
+            },
+            "enableResetAfterBuffering": {
+              "profv:type": "boolean",
+              "profv:byteOffset": 13,
+              "profv:byteLength": 1,
+              "profv:bitOffset": 0,
+              "map:valueMapping": {
+                "map:fromWire": [
+                  {
+                    "map:proc": "enum",
+                    "map:map": [
+                      {
+                        "map:wire": 0,
+                        "map:app": false
+                      },
+                      {
+                        "map:wire": 1,
+                        "map:app": true
+                      }
+                    ],
+                    "map:onNoMatch": "error"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+**What the example shows:**
+- It follows the PROFINET complex-datatype pattern shown in https://w3c.github.io/wot-binding-templates/bindings/protocols/profinet/#example-complex-datatype.
+- The encoded bit values are modeled as `map:wire`, while the semantic boolean values are modeled as `map:app`.
+- `map:proc: "enum"` maps each encoded flag value to a boolean application value.
+- The example shows how a protocol-specific bitfield can still be represented with the generic `map` vocabulary when the semantic values are discrete and exact.
 
 ---
 
