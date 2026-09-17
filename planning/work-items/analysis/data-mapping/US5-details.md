@@ -19,8 +19,8 @@
   - Data Mapping in node-wot to choose a part of the JSON Payload: https://github.com/eclipse-thingweb/node-wot#data-mapping-per-thing
   - Profinet https://w3c.github.io/wot-binding-templates/bindings/protocols/profinet/#example-complex-datatype (`profv:payloadMapping`)
 - Notes:
-  - This does NOT include mathematical operations, that is above above point 3
-  - This does NOT restrict itself to simple type conversion, that is above point 4. However, this can be applied on top of point 4.
+  - This does NOT include mathematical operations, that is user story 3
+  - This does NOT restrict itself to simple type conversion, that is user story 4. However, this can be applied on top of user story 4.
 
 ---
 
@@ -31,8 +31,8 @@
 **Proposed solution:** A declarative, direction-explicit structural conversion pipeline attached at form level. The pipeline uses simple deterministic operators for path selection, placement, wrapping, array access, and bitfield conversion. It can be composed with the numeric operations of user story 3 and the enum operations of user story 4.
 
 **Core operators:**
-- `pick` - extract a value at a dot-notation path.
-- `place` - insert the current value at a dot-notation path.
+- `pick` - extract a value at a JSON Pointer.
+- `place` - insert the current value at a JSON Pointer.
 - `wrap` - put the current value into a fixed object or array template.
 - `unwrap` - remove a known envelope layer.
 - `at` - select an array element by integer index.
@@ -248,7 +248,7 @@ The following JSON-LD context defines the structural conversion terms not covere
 **Notes:**
 - `valueMapping`, `fromWire`, and `toWire` are shared pipeline attachment and direction terms.
 - `op` and the structural operation identifiers are proprietary execution step identifiers.
-- `map:path` is deliberately narrower than a general query language: it addresses object keys and array indexes only.
+- `map:path` uses [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901) syntax. It addresses object members and array elements only; it does not support filtering, wildcards, unions, or expressions.
 - `map:template` and `map:placeholder` describe deterministic envelope construction.
 - `map:fields`, `map:mask`, and `map:shift` describe bitfield layout; they do not replace binding-specific wire type and byte-order metadata.
 
@@ -267,7 +267,7 @@ The following JSON-LD context defines the structural conversion terms not covere
 | Term | Used by | Description |
 |---|---|---|
 | `map:proc` | All operations | Operation identifier for the current pipeline step. |
-| `map:path` | `pick`, `place`, `unwrap` | Dot-notation path over object keys and optional array indexes, such as `d.v` or `items[0].value`. |
+| `map:path` | `pick`, `place`, `unwrap` | JSON Pointer identifying an object member or array element, such as `/d/v` or `/items/0/value`. The empty string identifies the complete input document. |
 | `map:onMissing` | `pick`, `unwrap` | Missing-path policy: `error` (default), `null`, or `default`. |
 | `map:default` | `pick`, `unwrap` | Value returned when `map:onMissing` is `default`. |
 | `map:createMissing` | `place` | Whether missing intermediate containers are created; default is `true`. |
@@ -330,13 +330,13 @@ Structural operations can be composed in either direction. For example, a read p
 
 ### `pick`
 
-`pick` extracts one value from the current object or array using `map:path`. The path must be non-empty and resolve deterministically. The output is the selected value.
+`pick` extracts one value from the current object or array using `map:path`. The path MUST be a valid JSON Pointer and resolve deterministically; the empty string selects the complete input document. The output is the selected value.
 
 An unresolved path follows `map:onMissing`: `error` by default, `null` for a null result, or `default` when `map:default` is supplied.
 
 ### `place`
 
-`place` inserts the current value at `map:path` in an output object or array. Missing intermediate containers are created when `map:createMissing` is `true`. `map:targetTemplate` supplies the initial output container when required.
+`place` inserts the current value at the JSON Pointer given by `map:path` in an output object or array. Missing intermediate containers are created when `map:createMissing` is `true`. `map:targetTemplate` supplies the initial output container when required. JSON Pointer identifies the target; creation, replacement, and collision behavior remain defined by `place`.
 
 A path collision with a scalar where an object or array is required is an error. `place` must not produce a value that violates the target schema.
 
@@ -346,7 +346,7 @@ A path collision with a scalar where an object or array is required is an error.
 
 ### `unwrap`
 
-`unwrap` selects the contained value from one known envelope layer using `map:path` or an equivalent placeholder rule. Supplying both path and placeholder selectors is invalid. Supplying neither is invalid.
+`unwrap` selects the contained value from one known envelope layer using the JSON Pointer in `map:path` or an equivalent placeholder rule. Supplying both path and placeholder selectors is invalid. Supplying neither is invalid.
 
 ### `at` and `setAt`
 
@@ -398,9 +398,42 @@ All examples include proprietary `map` terms and available standard terms where 
 
 ### Example 1: IKEA Trådfri CoAP Bulb Dimmer Extraction and Placement
 
-The IKEA Trådfri Gateway (E1526) exposes connected smart light bulbs (such as the TRÅDFRI bulb E27 WS opal 980lm) over CoAP/DTLS at endpoints like `coaps://gateway.local:5684/15001/65538`. The gateway uses IPSO Smart Object structures in JSON payloads, where the light control parameters are nested under IPSO object `3311` (an array of light control instances) and dimmer resource `5851` (dimmer level `0..254`). 
+The IKEA Trådfri Gateway (E1526) exposes connected smart light bulbs (such as the TRÅDFRI bulb E27 WS opal 980lm) over CoAP/DTLS at endpoints like `coaps://gateway.local:5684/15001/65538`. The gateway uses IPSO Smart Object structures in JSON payloads. A complete read response contains device metadata and the available light resources, for example:
 
-The application property exposes a clean percentage scale (`0..100%`). On read, `map:proc: "pick"` extracts the nested integer value `3311[0].5851` before numeric scaling is applied. On write, the percentage is scaled back to `0..254`, rounded, and `map:proc: "wrap"` constructs the required nested JSON envelope `{"3311": [{"5851": "$value"}]}` for the CoAP payload.
+```json
+{
+  "3": {
+    "0": "IKEA of Sweden",
+    "1": "TRADFRI bulb E27 CWS opal 600lm",
+    "2": "",
+    "3": "1.3.002",
+    "6": 1,
+    "7": 1
+  },
+  "3311": [
+    {
+      "5706": "f5faf6",
+      "5707": 0,
+      "5708": 0,
+      "5709": 24930,
+      "5710": 24694,
+      "5711": 250,
+      "5850": 1,
+      "5851": 254,
+      "9003": 0
+    }
+  ],
+  "5750": 2,
+  "9001": "Living Room Bulb",
+  "9002": 1508005342,
+  "9003": 65537,
+  "9019": 1,
+  "9020": 1508012549,
+  "9054": 0
+}
+```
+
+Here, `3311` is the light-control object represented as an array, and `/3311/0/5851` is the JSON Pointer to the first light's raw dimmer value (`0..254`). The application property exposes a clean percentage scale (`0..100%`). On read, `map:proc: "pick"` extracts that nested value before numeric scaling is applied. A write request is a smaller partial payload, for example `{"3311": [{"5851": 127}]}`; the percentage is scaled back to `0..254`, rounded, and `map:proc: "wrap"` constructs this nested envelope for the CoAP payload.
 
 ```json
 {
@@ -430,7 +463,7 @@ The application property exposes a clean percentage scale (`0..100%`). On read, 
           "op": ["readproperty", "writeproperty"],
           "map:valueMapping": {
             "map:fromWire": [
-              { "map:proc": "pick", "map:path": "3311[0].5851" },
+              { "map:proc": "pick", "map:path": "/3311/0/5851" },
               { "map:proc": "mul", "map:value": 0.3937007874 },
               { "map:proc": "round", "map:mode": "nearest" }
             ],
@@ -458,7 +491,7 @@ The application property exposes a clean percentage scale (`0..100%`). On read, 
 ```
 
 **What the example shows:**
-- `map:proc: "pick"` extracts the nested IPSO resource `5851` from array element `3311[0]` out of the complex CoAP JSON response on read.
+- `map:proc: "pick"` extracts the nested IPSO resource `5851` at JSON Pointer `/3311/0/5851` from the complex CoAP JSON response on read.
 - The pipeline composes structural extraction with numeric scaling and rounding to expose a clean `0..100%` brightness property.
 - On write, `map:proc: "wrap"` reconstructs the required nested JSON envelope (`{"3311": [{"5851": "$value"}]}`) expected by the Trådfri gateway.
 - JSON Schema and QUDT annotate the application-level data model, while `map` handles the runtime transformation to and from the protocol wire payload.
@@ -512,11 +545,11 @@ This example exposes an individual boolean property `outlet2` for the second soc
 - `map:proc: "setAt"` updates the element at that index when writing an application boolean back to the array.
 - The surrounding array is managed by the pipeline to update one channel while preserving the positions of other channels.
 
-### Example 3: Bitfield to Structured Status Object for a Variable Frequency Drive
+### Example 3: SENTRON PAC4200 Non-Contiguous Limit Violation Bitmap
 
-The Siemens SINAMICS V20 variable frequency drive communicates over Modbus RTU and packs discrete drive status flags and operating codes into 16-bit status registers (such as holding register `40110`). 
+The Siemens SENTRON PAC4200 power monitoring device exposes a Modbus `Unsigned long` value named `Limit Violations` at offset `203`. The value occupies two 16-bit registers and contains 12 limit flags and 5 logic-result flags distributed across non-contiguous bytes: limits 0-7 are in byte 3, limits 8-11 are in the low nibble of byte 2, and the logic flags are in byte 0. Byte 1 and parts of byte 2 are unused.
 
-This example decomposes a 16-bit status register into an application-level object containing `alarm` (bit 0), `running` (bit 1), and a 2-bit numeric `modeCode` (bits 2–3). On read, `map:proc: "bitExtract"` unpacks the register integer into structured properties. On write, `map:proc: "bitCompose"` packs the fields back into the single 16-bit integer expected by the drive.
+This is the bitmap challenge described in [issue 1930](https://github.com/w3c/wot-thing-description/issues/1930), especially the [PAC4200 discussion](https://github.com/w3c/wot-thing-description/issues/1930#issuecomment-4342467719). The application exposes the packed value as an object of named boolean properties. `map:bitExtract` decomposes the 32-bit Modbus value on read, and `map:bitCompose` reconstructs it on write. The masks are non-contiguous in the overall word, but each individual field still has a distinct, non-overlapping mask.
 
 ```json
 {
@@ -526,21 +559,53 @@ This example decomposes a 16-bit status register into an application-level objec
       "map": "https://www.w3.org/wot/data-mapping/v1#"
     }
   ],
-  "id": "urn:example:thing:sinamics-v20-1",
-  "title": "SiemensSinamicsV20",
+  "id": "urn:example:thing:sentron-pac4200-1",
+  "title": "SentronPAC4200",
   "properties": {
-    "status": {
-      "title": "Drive Status",
+    "limitViolations": {
+      "title": "Limit Violations",
       "type": "object",
       "properties": {
-        "alarm": { "type": "boolean" },
-        "running": { "type": "boolean" },
-        "modeCode": { "type": "integer", "minimum": 0, "maximum": 3 }
+        "limit0": { "type": "boolean" },
+        "limit1": { "type": "boolean" },
+        "limit2": { "type": "boolean" },
+        "limit3": { "type": "boolean" },
+        "limit4": { "type": "boolean" },
+        "limit5": { "type": "boolean" },
+        "limit6": { "type": "boolean" },
+        "limit7": { "type": "boolean" },
+        "limit8": { "type": "boolean" },
+        "limit9": { "type": "boolean" },
+        "limit10": { "type": "boolean" },
+        "limit11": { "type": "boolean" },
+        "logicFlag": { "type": "boolean" },
+        "logicResult1": { "type": "boolean" },
+        "logicResult2": { "type": "boolean" },
+        "logicResult3": { "type": "boolean" },
+        "logicResult4": { "type": "boolean" }
       },
-      "required": ["alarm", "running", "modeCode"],
+      "required": [
+        "limit0",
+        "limit1",
+        "limit2",
+        "limit3",
+        "limit4",
+        "limit5",
+        "limit6",
+        "limit7",
+        "limit8",
+        "limit9",
+        "limit10",
+        "limit11",
+        "logicFlag",
+        "logicResult1",
+        "logicResult2",
+        "logicResult3",
+        "logicResult4"
+      ],
       "forms": [
         {
-          "href": "modbus://v20-drive.local/holding-register/40110",
+          "href": "modbus://pac4200.local/holding-register/203",
           "contentType": "application/octet-stream",
           "op": ["readproperty", "writeproperty"],
           "map:valueMapping": {
@@ -548,9 +613,23 @@ This example decomposes a 16-bit status register into an application-level objec
               {
                 "map:proc": "bitExtract",
                 "map:fields": [
-                  { "map:name": "alarm", "map:mask": 1, "map:shift": 0, "map:type": "boolean" },
-                  { "map:name": "running", "map:mask": 2, "map:shift": 1, "map:type": "boolean" },
-                  { "map:name": "modeCode", "map:mask": 12, "map:shift": 2, "map:type": "integer" }
+                  { "map:name": "limit0", "map:mask": 16777216, "map:shift": 24, "map:type": "boolean" },
+                  { "map:name": "limit1", "map:mask": 33554432, "map:shift": 25, "map:type": "boolean" },
+                  { "map:name": "limit2", "map:mask": 67108864, "map:shift": 26, "map:type": "boolean" },
+                  { "map:name": "limit3", "map:mask": 134217728, "map:shift": 27, "map:type": "boolean" },
+                  { "map:name": "limit4", "map:mask": 268435456, "map:shift": 28, "map:type": "boolean" },
+                  { "map:name": "limit5", "map:mask": 536870912, "map:shift": 29, "map:type": "boolean" },
+                  { "map:name": "limit6", "map:mask": 1073741824, "map:shift": 30, "map:type": "boolean" },
+                  { "map:name": "limit7", "map:mask": 2147483648, "map:shift": 31, "map:type": "boolean" },
+                  { "map:name": "limit8", "map:mask": 65536, "map:shift": 16, "map:type": "boolean" },
+                  { "map:name": "limit9", "map:mask": 131072, "map:shift": 17, "map:type": "boolean" },
+                  { "map:name": "limit10", "map:mask": 262144, "map:shift": 18, "map:type": "boolean" },
+                  { "map:name": "limit11", "map:mask": 524288, "map:shift": 19, "map:type": "boolean" },
+                  { "map:name": "logicFlag", "map:mask": 1, "map:shift": 0, "map:type": "boolean" },
+                  { "map:name": "logicResult1", "map:mask": 2, "map:shift": 1, "map:type": "boolean" },
+                  { "map:name": "logicResult2", "map:mask": 4, "map:shift": 2, "map:type": "boolean" },
+                  { "map:name": "logicResult3", "map:mask": 8, "map:shift": 3, "map:type": "boolean" },
+                  { "map:name": "logicResult4", "map:mask": 16, "map:shift": 4, "map:type": "boolean" }
                 ]
               }
             ],
@@ -558,9 +637,23 @@ This example decomposes a 16-bit status register into an application-level objec
               {
                 "map:proc": "bitCompose",
                 "map:fields": [
-                  { "map:name": "alarm", "map:mask": 1, "map:shift": 0, "map:type": "boolean" },
-                  { "map:name": "running", "map:mask": 2, "map:shift": 1, "map:type": "boolean" },
-                  { "map:name": "modeCode", "map:mask": 12, "map:shift": 2, "map:type": "integer" }
+                  { "map:name": "limit0", "map:mask": 16777216, "map:shift": 24, "map:type": "boolean" },
+                  { "map:name": "limit1", "map:mask": 33554432, "map:shift": 25, "map:type": "boolean" },
+                  { "map:name": "limit2", "map:mask": 67108864, "map:shift": 26, "map:type": "boolean" },
+                  { "map:name": "limit3", "map:mask": 134217728, "map:shift": 27, "map:type": "boolean" },
+                  { "map:name": "limit4", "map:mask": 268435456, "map:shift": 28, "map:type": "boolean" },
+                  { "map:name": "limit5", "map:mask": 536870912, "map:shift": 29, "map:type": "boolean" },
+                  { "map:name": "limit6", "map:mask": 1073741824, "map:shift": 30, "map:type": "boolean" },
+                  { "map:name": "limit7", "map:mask": 2147483648, "map:shift": 31, "map:type": "boolean" },
+                  { "map:name": "limit8", "map:mask": 65536, "map:shift": 16, "map:type": "boolean" },
+                  { "map:name": "limit9", "map:mask": 131072, "map:shift": 17, "map:type": "boolean" },
+                  { "map:name": "limit10", "map:mask": 262144, "map:shift": 18, "map:type": "boolean" },
+                  { "map:name": "limit11", "map:mask": 524288, "map:shift": 19, "map:type": "boolean" },
+                  { "map:name": "logicFlag", "map:mask": 1, "map:shift": 0, "map:type": "boolean" },
+                  { "map:name": "logicResult1", "map:mask": 2, "map:shift": 1, "map:type": "boolean" },
+                  { "map:name": "logicResult2", "map:mask": 4, "map:shift": 2, "map:type": "boolean" },
+                  { "map:name": "logicResult3", "map:mask": 8, "map:shift": 3, "map:type": "boolean" },
+                  { "map:name": "logicResult4", "map:mask": 16, "map:shift": 4, "map:type": "boolean" }
                 ]
               }
             ]
@@ -573,9 +666,10 @@ This example decomposes a 16-bit status register into an application-level objec
 ```
 
 **What the example shows:**
-- `map:proc: "bitExtract"` unpacks a single Modbus integer into a structured application object on read (e.g., wire value `13` / `0b1101` yields `alarm=true`, `running=false`, and `modeCode=3`).
-- `map:proc: "bitCompose"` explicitly packs structured object properties back into an integer for the write pipeline.
-- The masks `1`, `2`, and `12` are disjoint and non-overlapping, so each bit belongs to exactly one logical field.
+- The PAC4200 exposes one 32-bit Modbus value, while the application sees 17 named boolean properties.
+- `map:bitExtract` supports fields distributed across non-contiguous parts of the word; unused bits and bytes simply have no field definition.
+- `map:bitCompose` provides the explicit reverse mapping for a writable structured representation.
+- The masks are individual, non-overlapping bit masks even though the groups of fields are separated by unused wire positions.
 
 ### Example 4: Bitfield With Enum Conversion for an HVAC Heat Pump
 
@@ -666,22 +760,6 @@ The application property `status` exposes semantic fields: `alarm` (boolean), `r
 
 ## Binding Comparison
 
-### node-wot
-
-The node-wot data-mapping approach supports selecting a part of a JSON payload for a Thing. This corresponds to the `pick` pattern. The proposed `map` vocabulary generalizes that behavior with explicit reverse placement, wrapping, array access, and bitfield operators, while retaining deterministic path semantics.
-
-### PROFINET
-
-The PROFINET binding defines `profv:payloadMapping` and related byte/bit position terms for mapping complex data types. Its structural concepts are protocol-aware and remain useful for describing payload layout. The general mapping model corresponds as follows:
-
-| PROFINET term | General relation |
-|---|---|
-| `profv:payloadMapping` | `map:valueMapping` structural pipeline |
-| `profv:byteOffset` / `profv:byteLength` | Binding wire-layout metadata before structural conversion |
-| `profv:bitOffset` / `profv:bitlength` | `map:mask` and `map:shift` conceptually, with binding-specific byte layout retained |
-
-The general operators should not replace byte order, byte offsets, or native PROFINET type declarations.
-
 ### LoRaWAN
 
 LoRaWAN terms such as `lorav:byteOffset`, `lorav:presenceField`, `lorav:switchField`, and `lorav:guard` describe protocol-specific payload layout and conditional inclusion. They relate to structural conversion, but are not all direct equivalents of the phase 1 operators:
@@ -696,6 +774,34 @@ LoRaWAN terms such as `lorav:byteOffset`, `lorav:presenceField`, `lorav:switchFi
 ### Modbus
 
 The Modbus binding does not define a generic structural conversion vocabulary in the reviewed material. `modv:function`, `modv:entity`, `modv:address`, and `modv:quantity` select the protocol operation and register range, while byte order and payload length describe wire representation. `map:bitExtract` and `map:bitCompose` can supply the missing logical field conversion after the Modbus value has been decoded as an integer.
+
+### BACnet
+
+The BACnet binding describes protocol-side structure through `bacv:hasDataType` and its BACnet datatype classes. `bacv:Sequence` and `bacv:List` represent structured and array-like values, while `bacv:hasMember` describes members of a sequence or list. `bacv:Choice` and `bacv:hasNamedMember`, together with `bacv:hasFieldName` and `bacv:hasContextTag`, describe named alternatives and their BACnet context tags. These terms provide protocol-specific type and encoding metadata rather than a general-purpose path transformation pipeline.
+
+| BACnet term | General relation |
+|---|---|
+| `bacv:hasDataType` | Protocol-side type metadata; used alongside `map:valueMapping`, not replaced by it |
+| `bacv:Sequence` / `bacv:List` | Structured or array-like wire values; can be reshaped with `map:wrap`, `map:unwrap`, `map:at`, and `map:setAt` when the payload is exposed as JSON-like data |
+| `bacv:hasMember` | Declares a member of a sequence or list; relates to a structural target addressed by `map:path` and `map:place` |
+| `bacv:Choice` / `bacv:hasNamedMember` | Protocol choice and named-member metadata; conditional selection is outside the current `map` operator set |
+| `bacv:hasFieldName` | Name of a protocol-side named member; may correspond to an object key addressed by `map:path` |
+| `bacv:hasContextTag` | BACnet encoding metadata; has no direct `map` equivalent |
+| `bacv:hasValueMap` / `bacv:hasProtocolVal` / `bacv:hasLogicalVal` | Exact enum conversion, corresponding to the enum operation from user story 4 rather than to a structural operator |
+
+The BACnet binding's enum-mapping example uses `bacv:hasValueMap` to map protocol values to logical values, while its datatype mapping section uses `bacv:Sequence`, `bacv:List`, and `bacv:Choice` to describe the wire model. The generic `map` vocabulary can supply explicit extraction, placement, wrapping, unwrapping, and array operations after a BACnet payload has been decoded, but it does not replace BACnet service terms, datatype declarations, context tags, or other encoding metadata.
+
+### PROFINET
+
+The PROFINET binding defines `profv:payloadMapping` and related byte/bit position terms for mapping complex data types. Its structural concepts are protocol-aware and remain useful for describing payload layout. The general mapping model corresponds as follows:
+
+| PROFINET term | General relation |
+|---|---|
+| `profv:payloadMapping` | `map:valueMapping` structural pipeline |
+| `profv:byteOffset` / `profv:byteLength` | Binding wire-layout metadata before structural conversion |
+| `profv:bitOffset` / `profv:bitlength` | `map:mask` and `map:shift` conceptually, with binding-specific byte layout retained |
+
+The general operators should not replace byte order, byte offsets, or native PROFINET type declarations.
 
 ---
 
@@ -741,7 +847,7 @@ A minimal implementation should provide tests for:
 ## Suggested Next Steps
 
 1. Review the provisional operator names and path syntax against existing WoT vocabulary conventions.
-2. Define whether `map:path` should support only object keys and array indexes or a larger standardized selector language.
+2. Confirm the JSON Pointer profile for `map:path`, including root selection, array bounds, and the RFC 6901 escaping rules for `~` and `/` in object member names.
 3. Decide whether `map:targetTemplate` belongs in `place` or should be represented by a separate initialization operator.
 4. Align `map:bitExtract` and `map:bitCompose` with binding-specific byte-order and integer-width metadata.
 5. Add interoperable test vectors for envelope conversion, array updates, bitfield round trips, and combined enum conversion.
