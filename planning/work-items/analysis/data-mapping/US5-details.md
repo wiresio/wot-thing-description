@@ -57,8 +57,8 @@
 - Inserting application values into nested protocol payloads.
 - Adding and removing fixed object or array envelopes.
 - Selecting and updating array elements by index.
-- Decomposing packed integer fields into structured boolean or integer values.
-- Composing structured fields back into packed integer values.
+- Decomposing a packed integer (already decoded from the wire's byte array by the payload binding) into structured boolean or integer values.
+- Composing structured fields back into a packed integer for the payload binding to encode onto the wire.
 - Combining structural conversion with numeric scaling and enum mapping.
 
 **Out of scope:**
@@ -66,6 +66,7 @@
 - Full JSONPath or query languages with filters, unions, or non-deterministic selectors.
 - Protocol framing, addressing, headers, timing, and transport details.
 - Numeric scaling and enum semantics themselves, which belong to user stories 3 and 4.
+- Extracting multiple independently-positioned, differently-typed fields (e.g., a float and a timestamp) from distinct byte ranges of a larger payload; this is byte-offset/byte-length/type decoding, a payload-binding concern (see PROFINET's `profv:byteOffset`/`profv:byteLength`/`profv:type`), not a `bitExtract`/`bitCompose` bitmask concern.
 
 ---
 
@@ -248,7 +249,7 @@ The following JSON-LD context defines the structural conversion terms not covere
 **Notes:**
 - `valueMapping`, `fromWire`, and `toWire` are shared pipeline attachment and direction terms.
 - `op` and the structural operation identifiers are proprietary execution step identifiers.
-- `map:path` uses [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901) syntax. It addresses object members and array elements only; it does not support filtering, wildcards, unions, or expressions.
+- `map:path` uses [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901) syntax. We limit it to addressing object members and array elements only and do not use its support for filtering, wildcards, unions, or expressions.
 - `map:template` and `map:placeholder` describe deterministic envelope construction.
 - `map:fields`, `map:mask`, and `map:shift` describe bitfield layout; they do not replace binding-specific wire type and byte-order metadata.
 
@@ -281,22 +282,26 @@ The following JSON-LD context defines the structural conversion terms not covere
 | Term | Used by | Description |
 |---|---|---|
 | `map:fields` | `bitExtract`, `bitCompose` | Ordered list of field definitions. |
-| `map:name` | Field definition | Name used as the structured object's key. |
+| `map:name` | Field definition, `enum` (when applied to one member of a structured object) | Key used as the structured object's member. MUST equal the name of the property or affordance (or nested object member) it maps to in the target DataSchema; it MUST NOT be a wire-only or intermediate label that differs from the final application-facing name. |
 | `map:mask` | Field definition | Non-zero integer mask selecting the field's bits. |
 | `map:shift` | Field definition | Non-negative right shift for extraction or left shift for composition. |
-| `map:type` | Field definition | `boolean` or `integer`; default is `integer`. |
+| `map:type` | Field definition | `boolean` or `integer`; default is `integer`. `bitExtract`/`bitCompose` only ever read or write an unsigned integer magnitude; `boolean` and `integer` are the only possible outputs. Other application-facing types (scaled numbers, enum labels, timestamps) are reached by composing a follow-up operator — numeric scaling (user story 3) or exact lookup (user story 4) — on the extracted integer, not by adding values to `map:type`. |
 
-For extraction, a field is computed as:
+`wireValue` is the integer passed into `bitExtract` on read, or produced by `bitCompose` on write; it represents the full protocol-side value being decomposed or assembled (for example, one Modbus register, or a value already combined from multiple registers by the binding). `fieldValue` is the value of one named field in the structured object handled by `bitExtract`/`bitCompose` — one member of the application-facing property, not the whole property.
+
+For extraction, each field is computed independently from the same `wireValue`:
 
 $$
 fieldValue = (wireValue \mathbin{\&} mask) \mathbin{>>} shift
 $$
 
-For composition, a field is placed as:
+For composition, the composed integer is built incrementally over `map:fields`, in list order. Let $wireValue_0 = 0$ be the initial accumulator. For each field $i$:
 
 $$
-wireValue = wireValue \mathbin{|} ((fieldValue \mathbin{<<} shift) \mathbin{\&} mask)
+wireValue_i = wireValue_{i-1} \mathbin{|} ((fieldValue_i \mathbin{<<} shift_i) \mathbin{\&} mask_i)
 $$
+
+The composed integer is $wireValue_n$ after the last field has been placed. Because masks in one operation must not overlap, the accumulation order does not affect the result. Bits not covered by any field definition are `0` in the composed integer; a binding that must preserve reserved or unused bits from the device's current value needs an explicit base value, which `bitCompose` does not yet define.
 
 Masks in one operation must not overlap. A boolean field is `false` when its extracted value is zero and `true` otherwise.
 
@@ -322,7 +327,7 @@ When structural conversion is combined with numeric and enum mapping, the defaul
 
 The output of each operation becomes the input of the next operation. Implementations MUST execute each direction list in document order. JSON arrays are ordered, and the JSON-LD `@list` container preserves ordered list semantics.
 
-Structural operations can be composed in either direction. For example, a read path may use `pick` followed by numeric scaling, while a write path may use inverse scaling followed by `place`. A `bitExtract` result may be followed by an exact enum operation on one named field as described by user story 4.
+Structural operations can be composed in either direction. For example, a read path may use `pick` followed by numeric scaling, while a write path may use inverse scaling followed by `place`. A `bitExtract` result may be followed by an exact enum operation on one named field as described by user story 4. When `enum` is applied to a structured object rather than the whole current value, `map:name` selects the object member to read and is also the member written back; `enum` never renames a member. Renaming a member to a different application-facing name is a structural concern handled by `pick`/`place`, not by `enum`.
 
 ---
 
@@ -673,7 +678,7 @@ This is the bitmap challenge described in [issue 1930](https://github.com/w3c/wo
 
 ### Example 4: Bitfield With Enum Conversion for an HVAC Heat Pump
 
-The Daikin Altherma heat pump with Modbus interface communicates system status through 16-bit holding registers (such as register `40001`). The register packs boolean flags for `alarm` (bit 0) and `running` (bit 1) together with a 2-bit integer `modeCode` (`0`, `1`, `2` at bits 2–3).
+The Daikin Altherma heat pump with Modbus interface communicates system status through 16-bit holding registers (such as register `40001`). The register packs boolean flags for `alarm` (bit 0) and `running` (bit 1) together with a 2-bit integer mode code (`0`, `1`, `2` at bits 2–3).
 
 The application property `status` exposes semantic fields: `alarm` (boolean), `running` (boolean), and `mode` (string enum: `"off"`, `"auto"`, `"manual"`). This requires composing structural bitfield extraction with enum conversion in a single pipeline.
 
@@ -709,13 +714,12 @@ The application property `status` exposes semantic fields: `alarm` (boolean), `r
                 "map:fields": [
                   { "map:name": "alarm", "map:mask": 1, "map:shift": 0, "map:type": "boolean" },
                   { "map:name": "running", "map:mask": 2, "map:shift": 1, "map:type": "boolean" },
-                  { "map:name": "modeCode", "map:mask": 12, "map:shift": 2, "map:type": "integer" }
+                  { "map:name": "mode", "map:mask": 12, "map:shift": 2, "map:type": "integer" }
                 ]
               },
               {
                 "map:proc": "enum",
-                "map:mapFrom": "modeCode",
-                "map:mapTo": "mode",
+                "map:name": "mode",
                 "map:map": [
                   { "map:wire": 0, "map:app": "off" },
                   { "map:wire": 1, "map:app": "auto" },
@@ -726,8 +730,7 @@ The application property `status` exposes semantic fields: `alarm` (boolean), `r
             "map:toWire": [
               {
                 "map:proc": "enum",
-                "map:mapFrom": "mode",
-                "map:mapTo": "modeCode",
+                "map:name": "mode",
                 "map:map": [
                   { "map:app": "off", "map:wire": 0 },
                   { "map:app": "auto", "map:wire": 1 },
@@ -739,7 +742,7 @@ The application property `status` exposes semantic fields: `alarm` (boolean), `r
                 "map:fields": [
                   { "map:name": "alarm", "map:mask": 1, "map:shift": 0, "map:type": "boolean" },
                   { "map:name": "running", "map:mask": 2, "map:shift": 1, "map:type": "boolean" },
-                  { "map:name": "modeCode", "map:mask": 12, "map:shift": 2, "map:type": "integer" }
+                  { "map:name": "mode", "map:mask": 12, "map:shift": 2, "map:type": "integer" }
                 ]
               }
             ]
@@ -752,9 +755,10 @@ The application property `status` exposes semantic fields: `alarm` (boolean), `r
 ```
 
 **What the example shows:**
-- The read pipeline first extracts the bitfield into discrete fields with `map:proc: "bitExtract"`, then maps the extracted `modeCode` integer to the application-level `mode` string enum with `map:proc: "enum"`.
-- The write pipeline executes the inverse sequence: reverse enum mapping from `mode` to `modeCode`, followed by `map:proc: "bitCompose"` to pack the fields into the 16-bit Modbus integer.
-- `map:mapFrom` and `map:mapTo` allow the enum step to transform one field within a structured object while leaving the other fields (`alarm`, `running`) untouched.
+- `bitExtract` names the mode field `mode` directly, the same name used by the application-facing `status.mode` property, so no rename is needed later in the pipeline.
+- The read pipeline first extracts the bitfield into discrete fields with `map:proc: "bitExtract"`, then converts the `mode` field's raw integer to its string enum in place with `map:proc: "enum"` and `map:name: "mode"`.
+- The write pipeline executes the inverse sequence: reverse enum mapping in place on `mode`, followed by `map:proc: "bitCompose"` to pack the fields into the 16-bit Modbus integer.
+- A single, consistent `map:name` selects the same object member for `bitExtract`, `enum`, and `bitCompose`, leaving the other fields (`alarm`, `running`) untouched; `enum` reads and writes the same key rather than renaming it.
 
 ---
 
@@ -826,29 +830,3 @@ Binding-specific conditional payload selection and byte-layout metadata should r
 - JSON Schema remains responsible for validating the resulting application and wire structures.
 - Explicit reverse operations avoid guessed reconstruction of dropped fields or envelopes.
 - Conformance behavior for missing paths, mask overlap, and invalid indexes can be shared across bindings.
-
----
-
-## Conformance Test Intent
-
-A minimal implementation should provide tests for:
-
-- `pick` success and missing-path behavior for `error`, `null`, and `default`.
-- `place` creation of intermediate containers and rejection of path collisions.
-- `wrap` placeholder count validation and `unwrap` envelope extraction.
-- `at` and `setAt` valid, negative, fractional, and out-of-range indexes.
-- `bitExtract` with boolean and integer fields.
-- `bitCompose` round-trip behavior and missing-field rejection.
-- Zero-mask, negative-shift, overlapping-mask, and field-overflow rejection.
-- Combined structural, numeric, and enum processing order.
-- Writable mappings that require explicit reconstruction rules.
-- Preservation of operation order in both direction lists.
-
-## Suggested Next Steps
-
-1. Review the provisional operator names and path syntax against existing WoT vocabulary conventions.
-2. Confirm the JSON Pointer profile for `map:path`, including root selection, array bounds, and the RFC 6901 escaping rules for `~` and `/` in object member names.
-3. Decide whether `map:targetTemplate` belongs in `place` or should be represented by a separate initialization operator.
-4. Align `map:bitExtract` and `map:bitCompose` with binding-specific byte-order and integer-width metadata.
-5. Add interoperable test vectors for envelope conversion, array updates, bitfield round trips, and combined enum conversion.
-6. Validate compatibility with node-wot data mapping and relevant Binding Template payload-mapping mechanisms.
